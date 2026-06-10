@@ -115,7 +115,7 @@ async function boot() {
   _user = user;
   _profile = await window.hk.getProfile(user.id);
 
-  if (!_profile || !['admin','teacher','moderator'].includes(_profile.role)) {
+  if (!_profile || !['admin','teacher'].includes(_profile.role)) {
     $('login-err').textContent = 'このアプリは教師・管理者専用です。アクセス権限がありません。';
     $('login-err').classList.remove('hidden');
     await window.hk.signOut();
@@ -124,7 +124,7 @@ async function boot() {
   }
 
   $('header-sub').textContent = (_profile.display_name || user.email) +
-    ' (' + (_profile.role === 'moderator' ? 'モデレーター' : _profile.role === 'teacher' ? '教師' : '管理者') + ')';
+    ' (' + (_profile._profile.role === 'teacher' ? '教師' : '管理者') + ')';
 
   await Promise.all([loadStudents(), loadAssignments()]);
   showScreen('screen-app');
