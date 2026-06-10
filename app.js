@@ -137,9 +137,15 @@ async function loadStudents() {
     .from('profiles')
     .select('id,display_name,class_name,school,student_number,role')
     .eq('role', 'student');
-  // Teachers only see their assigned school; admins see all
-  if (_profile && _profile.role === 'teacher' && _profile.school) {
-    q = q.eq('school', _profile.school);
+  if (_profile && _profile.role === 'teacher') {
+    // Filter by assigned school
+    if (_profile.school) {
+      q = q.eq('school', _profile.school);
+    }
+    // Filter by assigned classes if set — otherwise see all classes in their school
+    if (_profile.assigned_classes && _profile.assigned_classes.length > 0) {
+      q = q.in('class_name', _profile.assigned_classes);
+    }
   }
   const { data } = await q.order('class_name').order('display_name');
   _students = data || [];
