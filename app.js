@@ -133,11 +133,15 @@ async function boot() {
 
 // ── Data ───────────────────────────────────────────────────────────────────
 async function loadStudents() {
-  const { data } = await window.hk._client
+  let q = window.hk._client
     .from('profiles')
     .select('id,display_name,class_name,school,student_number,role')
-    .eq('role', 'student')
-    .order('class_name').order('display_name');
+    .eq('role', 'student');
+  // Teachers only see their assigned school; admins see all
+  if (_profile && _profile.role === 'teacher' && _profile.school) {
+    q = q.eq('school', _profile.school);
+  }
+  const { data } = await q.order('class_name').order('display_name');
   _students = data || [];
 }
 
