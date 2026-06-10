@@ -124,7 +124,7 @@ async function boot() {
   }
 
   $('header-sub').textContent = (_profile.display_name || user.email) +
-    ' (' + (_profile._profile.role === 'teacher' ? '教師' : '管理者') + ')';
+    ' (' + (_profile.role === 'teacher' ? '教師' : '管理者') + ')';
 
   await Promise.all([loadStudents(), loadAssignments()]);
   showScreen('screen-app');
@@ -166,6 +166,7 @@ async function loadQuiz() {
 
 // ── Main render ─────────────────────────────────────────────────────────────
 function renderApp() {
+  if (!_profile) return;
   const canEdit = ['admin','teacher'].includes(_profile.role);
   const root = $('gb-root');
   root.innerHTML =
@@ -299,7 +300,7 @@ function renderAssignmentsTab(canEdit) {
 
 function renderAsgnGrid() {
   const el = $('asgn-grid');
-  const canEdit = ['admin','teacher'].includes(_profile.role);
+  const canEdit = _profile && ['admin','teacher'].includes(_profile.role);
   if (!_assignments.length) {
     el.innerHTML = '<div class="gb-empty" style="grid-column:1/-1">課題がまだありません。</div>';
     return;
