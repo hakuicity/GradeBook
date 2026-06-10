@@ -1,0 +1,16 @@
+{
+  "name": "グレードブック — Hakui City Schools",
+  "short_name": "グレードブック",
+  "description": "Teacher gradebook for viewing and managing student quiz scores",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f1f5f1",
+  "theme_color": "#2E7D32",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "categories": ["education","productivity"],
+  "lang": "ja",
+  "scope": "./"
+}
