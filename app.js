@@ -254,8 +254,10 @@ function renderGradesTab() {
   const classes = [...new Set(_students.map(s=>s.class_name).filter(Boolean))]
     .filter(c => !tc || tc.includes(c)).sort();
   const levels  = APP_LEVELS[_selApp] || [];
-  const cats    = _selApp === 'nh6'     ? ['','grammar','response','writing']
-                : _selApp === 'eiken'   ? ['','ALL','READING','LISTENING','VOCABULARY']
+  // Category options per app — must match what each app writes to quiz_results
+  const cats    = _selApp === 'nh6'        ? ['','grammar','response']
+                : _selApp === 'eiken'      ? ['','ALL','READING','LISTENING','VOCABULARY']
+                : _selApp === 'newhorizon' ? ['','category','grade5','grade6']
                 : [''];
 
   $('tab-body').innerHTML =
@@ -266,7 +268,16 @@ function renderGradesTab() {
     '<select id="f-level">' + levels.map(lv=>'<option value="'+lv+'"'+(lv===_selLevel?' selected':'')+'>'+esc((LEVEL_LABELS[_selApp]||{})[lv]||lv)+'</option>').join('') + '</select></div>' +
     (cats.length > 1 ?
     '<div class="gb-filter-group"><label>カテゴリー</label>' +
-    '<select id="f-cat">' + cats.map(c=>'<option value="'+c+'"'+(c===_selCat?' selected':'')+'>'+(c||'全カテゴリー')+'</option>').join('') + '</select></div>' : '') +
+    '<select id="f-cat">' + cats.map(c => {
+      const label = !c ? '全カテゴリー'
+        : c === 'category' ? 'カテゴリー別'
+        : c === 'grade5'   ? '5年生'
+        : c === 'grade6'   ? '6年生'
+        : c === 'grammar'  ? '文法'
+        : c === 'response' ? '応答'
+        : c;
+      return '<option value="'+c+'"'+(c===_selCat?' selected':'')+'>'+label+'</option>';
+    }).join('') + '</select></div>' : '') +
     (function(){
       const tCls = teacherClasses();
       const visibleClasses = tCls ? classes.filter(c => tCls.includes(c)) : classes;
