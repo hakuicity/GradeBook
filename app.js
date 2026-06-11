@@ -155,8 +155,15 @@ async function loadAssignments() {
   const { data } = await window.hk._client
     .from('assignments')
     .select('*')
-    .order('created_at', { ascending: false });
+    .order('due_date', { ascending: true, nullsLast: true });
   _assignments = data || [];
+}
+
+function teacherClasses() {
+  // Returns list of classes this teacher is allowed to manage
+  if (!_profile || _profile.role !== 'teacher') return null; // null = all
+  return (_profile.assigned_classes && _profile.assigned_classes.length)
+    ? _profile.assigned_classes : null;
 }
 
 async function loadQuiz() {
@@ -195,9 +202,30 @@ function renderApp() {
   else                        renderAssignmentsTab(canEdit);
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────
+// Is this assignment done? (archived manually OR past due date)
+function isAgDone(ag) {
+  if (ag.archived) return true;
+  if (ag.due_date) {
+    const d = new Date(ag.due_date); d.setHours(23,59,59);
+    return d < new Date();
+  }
+  return false;
+}
+
+// Classes this teacher is allowed to see/assign (null = all)
+function teacherClasses() {
+  if (!_profile || _profile.role !== 'teacher') return null;
+  return (_profile.assigned_classes && _profile.assigned_classes.length > 0)
+    ? _profile.assigned_classes : null;
+}
+
 // ── Grades tab ─────────────────────────────────────────────────────────────
 function renderGradesTab() {
-  const classes = [...new Set(_students.map(s=>s.class_name).filter(Boolean))].sort();
+  // For teachers, only show assigned classes; for admins, show all from students
+  const tc = teacherClasses();
+  const classes = [...new Set(_students.map(s=>s.class_name).filter(Boolean))]
+    .filter(c => !tc || tc.includes(c)).sort();
   const levels  = APP_LEVELS[_selApp] || [];
   const cats    = _selApp === 'nh6'     ? ['','grammar','response','writing']
                 : _selApp === 'eiken'   ? ['','ALL','READING','LISTENING','VOCABULARY']
@@ -212,8 +240,16 @@ function renderGradesTab() {
     (cats.length > 1 ?
     '<div class="gb-filter-group"><label>カテゴリー</label>' +
     '<select id="f-cat">' + cats.map(c=>'<option value="'+c+'"'+(c===_selCat?' selected':'')+'>'+(c||'全カテゴリー')+'</option>').join('') + '</select></div>' : '') +
-    '<div class="gb-filter-group"><label>クラス</label>' +
-    '<select id="f-class"><option value="">全クラス</option>' + classes.map(c=>'<option value="'+esc(c)+'"'+(c===_selClass?' selected':'')+'>'+esc(c)+'</option>').join('') + '</select></div>' +
+    (function(){
+      const tCls = teacherClasses();
+      const visibleClasses = tCls ? classes.filter(c => tCls.includes(c)) : classes;
+      const showAll = !tCls;
+      return '<div class="gb-filter-group"><label>クラス</label>' +
+        '<select id="f-class">' +
+        (showAll ? '<option value="">全クラス</option>' : '') +
+        visibleClasses.map(c=>'<option value="'+esc(c)+'"'+(c===_selClass?' selected':'')+'>'+esc(c)+'</option>').join('') +
+        '</select></div>';
+    })() +
     '<div class="gb-filter-group"><label>開始日</label><input type="date" id="f-from" value="'+esc(_dateFrom)+'"></div>' +
     '<div class="gb-filter-group"><label>終了日</label><input type="date" id="f-to" value="'+esc(_dateTo)+'"></div>' +
     '<div class="gb-filter-group" style="align-self:flex-end;display:flex;gap:8px">' +
@@ -301,39 +337,99 @@ function renderAssignmentsTab(canEdit) {
   const el = $('tab-body');
   el.innerHTML = '<div class="gb-wrap" style="padding-top:0">' +
     (canEdit ? '<button class="asgn-new" id="asgn-new-btn">＋ 新しい課題を作成する</button>' : '') +
-    '<div class="asgn-grid" id="asgn-grid" style="margin-top:12px"></div>' +
+    '<div id="asgn-grid" style="margin-top:12px"></div>' +
     '</div>';
-
   if (canEdit) $('asgn-new-btn').onclick = () => openAssignmentModal(null);
   renderAsgnGrid();
 }
 
 function renderAsgnGrid() {
   const el = $('asgn-grid');
-  const canEdit = _profile && ['admin','teacher'].includes(_profile.role);
-  if (!_assignments.length) {
-    el.innerHTML = '<div class="gb-empty" style="grid-column:1/-1">課題がまだありません。</div>';
+  const canEdit  = _profile && ['admin','teacher'].includes(_profile.role);
+  const isAdmin  = _profile && _profile.role === 'admin';
+  const tCls     = teacherClasses(); // null = no restriction
+
+  // Filter assignments visible to this user
+  let visible = _assignments;
+  if (tCls) visible = visible.filter(ag => !ag.class_name || tCls.includes(ag.class_name));
+
+  const active   = visible.filter(ag => !isAgDone(ag));
+  const done     = visible.filter(ag =>  isAgDone(ag));
+
+  if (!visible.length) {
+    el.innerHTML = '<div class="gb-empty">課題がまだありません。</div>';
     return;
   }
-  el.innerHTML = _assignments.map(ag => {
-    const lv = (LEVEL_LABELS[ag.app_id]||{})[ag.level] || ag.level || '全Unit';
-    return '<div class="asgn-card">' +
+
+  function cardHTML(ag) {
+    const lv   = (LEVEL_LABELS[ag.app_id]||{})[ag.level] || ag.level || '全Unit';
+    const done = isAgDone(ag);
+    const overdue = !ag.archived && ag.due_date && new Date(ag.due_date+'T23:59:59') < new Date();
+    return '<div class="asgn-card" style="border-left-color:' + (done?'#9ca3af':'var(--accent)') + ';opacity:'+(done?'.75':'1')+'">' +
       '<div class="asgn-title">'+esc(ag.title)+'</div>' +
       '<div class="asgn-meta">'+esc(APP_LABELS[ag.app_id]||ag.app_id)+' &nbsp;·&nbsp; '+esc(lv)+
         (ag.category?' / '+esc(ag.category):'')+
         (ag.class_name?' &nbsp;·&nbsp; '+esc(ag.class_name):' &nbsp;·&nbsp; 全クラス')+'</div>' +
-      (ag.due_date?'<div style="font-size:12px;font-weight:700;color:var(--amber)">締切: '+esc(ag.due_date)+'</div>':'')+
+      (ag.due_date?'<div style="font-size:12px;font-weight:700;color:'+(overdue?'#dc2626':'var(--amber)')+'">'+
+        (overdue?'⚠️ 期限切れ: ':'📅 締切: ')+esc(ag.due_date)+'</div>':'')+
+      (ag.archived?'<div style="font-size:11px;color:#9ca3af">🗄 手動完了済み</div>':'')+
       (ag.description?'<div style="font-size:12px;color:var(--text3)">'+esc(ag.description)+'</div>':'')+
       '<div class="asgn-actions">' +
       '<button class="btn-outline btn-sm" data-view="'+ag.id+'">📊 成績を見る</button>' +
-      (canEdit?'<button class="btn-outline btn-sm" data-edit="'+ag.id+'">✎ 編集</button>'+
-               '<button class="btn-outline btn-sm btn-danger" data-del="'+ag.id+'">🗑</button>':'')+
+      (canEdit?
+        '<button class="btn-outline btn-sm" data-edit="'+ag.id+'">✎</button>' +
+        (done
+          ? '<button class="btn-outline btn-sm" data-unarchive="'+ag.id+'" title="再開する">↩ 再開</button>'
+          : '<button class="btn-outline btn-sm" data-archive="'+ag.id+'" title="完了にする" style="color:var(--accent)">✅ 完了</button>'
+        ) +
+        '<button class="btn-outline btn-sm btn-danger" data-del="'+ag.id+'">🗑</button>'
+      :'')+
       '</div></div>';
-  }).join('');
+  }
+
+  function groupByClass(list) {
+    // For admins: group by class_name with dividers; for teachers: just flat
+    if (!isAdmin) return '<div class="asgn-grid">'+list.map(cardHTML).join('')+'</div>';
+    const grouped = {};
+    list.forEach(ag => { const k = ag.class_name || '全クラス'; (grouped[k]=grouped[k]||[]).push(ag); });
+    return Object.entries(grouped).sort(([a],[b])=>a.localeCompare(b,'ja')).map(([cls,ags])=>
+      '<div style="margin-bottom:20px">' +
+      '<div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);'+
+           'border-bottom:2px solid var(--border);padding-bottom:6px;margin-bottom:10px">'+esc(cls)+'</div>'+
+      '<div class="asgn-grid">'+ags.map(cardHTML).join('')+'</div>'+
+      '</div>'
+    ).join('');
+  }
+
+  let html = '';
+  if (active.length) {
+    html += '<div style="margin-bottom:24px">' +
+      '<div style="font-size:13px;font-weight:800;margin-bottom:12px">📋 アクティブな課題 <span style="background:var(--accent);color:#fff;border-radius:9px;padding:1px 8px;font-size:11px">'+active.length+'</span></div>' +
+      groupByClass(active) + '</div>';
+  }
+  if (done.length) {
+    html += '<div>' +
+      '<div style="font-size:13px;font-weight:800;margin-bottom:12px;color:var(--text2)">✅ 完了した課題</div>' +
+      groupByClass(done) + '</div>';
+  }
+  el.innerHTML = html;
 
   el.querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewAsgnGrades(b.dataset.view));
   el.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openAssignmentModal(_assignments.find(a=>a.id===b.dataset.edit)));
   el.querySelectorAll('[data-del]').forEach(b  => b.onclick = () => deleteAsgn(b.dataset.del));
+  el.querySelectorAll('[data-archive]').forEach(b   => b.onclick = () => setAgArchived(b.dataset.archive, true));
+  el.querySelectorAll('[data-unarchive]').forEach(b => b.onclick = () => setAgArchived(b.dataset.unarchive, false));
+}
+
+async function setAgArchived(id, archived) {
+  const label = archived ? '完了' : '再開';
+  if (!confirm('この課題を' + label + 'にしますか？')) return;
+  const { error } = await window.hk._client.from('assignments').update({ archived }).eq('id', id);
+  if (error) { alert('エラー: ' + error.message); return; }
+  const ag = _assignments.find(a => a.id === id);
+  if (ag) ag.archived = archived;
+  $('asgn-count').textContent = '(' + _assignments.filter(a=>!isAgDone(a)).length + ')';
+  renderAsgnGrid();
 }
 
 async function viewAsgnGrades(agId) {
@@ -407,7 +503,9 @@ async function viewAsgnGrades(agId) {
 
 // ── Assignment modal ────────────────────────────────────────────────────────
 function openAssignmentModal(existing) {
-  const classes = [...new Set(_students.map(s=>s.class_name).filter(Boolean))].sort();
+  const tc = teacherClasses();
+  const allClasses = [...new Set(_students.map(s=>s.class_name).filter(Boolean))].sort();
+  const modalClasses = tc ? allClasses.filter(c => tc.includes(c)) : allClasses;
   const ag = existing || {};
   const isNew = !existing;
 
@@ -430,7 +528,15 @@ function openAssignmentModal(existing) {
     '</div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
     '<div class="field"><label>対象クラス</label>'+
-    '<select id="ag-class"><option value="">全クラス</option>'+classes.map(c=>'<option value="'+esc(c)+'"'+(c===ag.class_name?' selected':'')+'>'+esc(c)+'</option>').join('')+'</select></div>'+
+    (function(){
+      const showAll = !tc;
+      // Auto-select teacher's only class if they have exactly one
+      const autoSelect = (!ag.class_name && tc && tc.length === 1) ? tc[0] : ag.class_name;
+      return '<select id="ag-class">' +
+        (showAll ? '<option value="">全クラス</option>' : '') +
+        modalClasses.map(c=>'<option value="'+esc(c)+'"'+(c===autoSelect?' selected':'')+'>'+esc(c)+'</option>').join('') +
+        '</select>';
+    })() +
     '<div class="field"><label>締め切り日</label><input type="date" id="ag-due" value="'+esc(ag.due_date||'')+'"></div>'+
     '</div>'+
     '<div class="modal-foot">'+
@@ -466,7 +572,7 @@ function openAssignmentModal(existing) {
     if (error) { alert('エラー: '+error.message); return; }
     backdrop.remove();
     await loadAssignments();
-    $('asgn-count').textContent = '('+_assignments.length+')';
+    $('asgn-count').textContent = '(' + _assignments.filter(a=>!isAgDone(a)).length + ')';
     renderAsgnGrid();
   };
 }
@@ -475,7 +581,7 @@ async function deleteAsgn(id) {
   if (!confirm('この課題を削除しますか？')) return;
   await window.hk._client.from('assignments').delete().eq('id', id);
   _assignments = _assignments.filter(a=>a.id!==id);
-  $('asgn-count').textContent = '('+_assignments.length+')';
+  $('asgn-count').textContent = '(' + _assignments.filter(a=>!isAgDone(a)).length + ')';
   renderAsgnGrid();
 }
 
