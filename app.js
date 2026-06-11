@@ -10,14 +10,41 @@ const APP_LABELS = {
 const APP_LEVELS = {
   eiken:      ['5','4','3','P'],
   nh6:        ['u1','u2','u3','u4','u5','u6','u7','u8'],
-  newhorizon: ['colors','sports','animals','food','daily','time','weather','nature',
-               'actions','descriptions','events','jobs','clubs','things',
-               'stationery','clothes','family','people','feelings','numbers','shapes'],
+  newhorizon: [
+    'feelings','numbers','colors','shapes','sports',
+    'food','drinks','desserts','fruit','vegetables','ingredients','tastes',
+    'animals','sea-animals','bugs',
+    'nature','time','weather',
+    'people','family','personalities',
+    'actions','daily','clothes','body',
+    'town','school','stationery','instruments','things',
+    'events','descriptions','jobs','clubs',
+    'g5u1','g5u2','g5u3','g5u4','g5u5','g5u6','g5u7','g5u8','g5u9',
+    'g6u1','g6u2','g6u3','g6u4','g6u5','g6u6','g6u7','g6u8','g6u9',
+  ],
 };
 const LEVEL_LABELS = {
   eiken: { '5':'5級','4':'4級','3':'3級','P':'準2級' },
   nh6:   { u1:'Unit 1',u2:'Unit 2',u3:'Unit 3',u4:'Unit 4',
             u5:'Unit 5',u6:'Unit 6',u7:'Unit 7',u8:'Unit 8' },
+  newhorizon: {
+    feelings:'気持ち', numbers:'数', colors:'色', shapes:'形',
+    sports:'スポーツ', food:'食べ物', drinks:'飲み物', desserts:'デザート',
+    fruit:'果物', vegetables:'野菜', ingredients:'食材', tastes:'味',
+    animals:'動物', 'sea-animals':'海の生き物', bugs:'虫',
+    nature:'自然', time:'月・曜日・季節', weather:'天気',
+    people:'人', family:'家族', personalities:'性格',
+    actions:'動作', daily:'一日の生活', clothes:'服装', body:'からだ',
+    town:'町', school:'学校・教科', stationery:'文房具',
+    instruments:'楽器', things:'身の回りのもの',
+    events:'学校行事', descriptions:'様子', jobs:'職業', clubs:'部活動',
+    g5u1:'5年 Unit 1', g5u2:'5年 Unit 2', g5u3:'5年 Unit 3',
+    g5u4:'5年 Unit 4', g5u5:'5年 Unit 5', g5u6:'5年 Unit 6',
+    g5u7:'5年 Unit 7', g5u8:'5年 Unit 8', g5u9:'5年 Unit 9',
+    g6u1:'6年 Unit 1', g6u2:'6年 Unit 2', g6u3:'6年 Unit 3',
+    g6u4:'6年 Unit 4', g6u5:'6年 Unit 5', g6u6:'6年 Unit 6',
+    g6u7:'6年 Unit 7', g6u8:'6年 Unit 8', g6u9:'6年 Unit 9',
+  },
 };
 const EDGE_BASE = 'https://rfntsrcguhldybddfgcl.supabase.co/functions/v1';
 
@@ -285,12 +312,29 @@ function renderGradeTable() {
   if (!students.length) { el.innerHTML = '<div class="gb-empty">生徒データがありません。</div>'; return; }
 
   const rows = students.map(s => {
-    const sessions = _quiz.filter(q => q.user_id === s.id);
+    // Exclude romaji-mode sessions (flashcard-style, not scored the same way)
+    // and sessions with fewer than 3 questions (incomplete/accidental)
+    const sessions = _quiz.filter(q =>
+      q.user_id === s.id &&
+      q.category !== 'romaji' &&
+      (q.total || 0) >= 3
+    );
     if (!sessions.length) return { s, n:0, best:null, avg:null, last:null };
-    const best = Math.max(...sessions.map(q=>q.score_pct||0));
-    const tc = sessions.reduce((a,q)=>a+(q.correct||0),0);
-    const tt = sessions.reduce((a,q)=>a+(q.total||0),0);
-    const avg = tt > 0 ? Math.round(tc/tt*100) : null;
+
+    let best, avg;
+    if (_selApp === 'nh6' && !_selCat) {
+      // NH6 without category filter: aggregate correct/total across all
+      // categories for this unit, giving a true combined unit score
+      const tc = sessions.reduce((a,q)=>a+(q.correct||0),0);
+      const tt = sessions.reduce((a,q)=>a+(q.total||0),0);
+      avg  = tt > 0 ? Math.round(tc/tt*100) : null;
+      best = avg; // combined score IS the score
+    } else {
+      best = Math.max(...sessions.map(q=>q.score_pct||0));
+      const tc = sessions.reduce((a,q)=>a+(q.correct||0),0);
+      const tt = sessions.reduce((a,q)=>a+(q.total||0),0);
+      avg  = tt > 0 ? Math.round(tc/tt*100) : null;
+    }
     const last = sessions.map(q=>q.created_at).sort().pop();
     return { s, n:sessions.length, best, avg, last };
   });
