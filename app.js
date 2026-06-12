@@ -6,6 +6,8 @@ const APP_LABELS = {
   eiken:      '🎓 英検アプリ',
   nh6:        '📗 NH6 練習',
   newhorizon: '📘 NH Vocab',
+  letstry1:   '🌸 Let\'s Try 1',
+  letstry2:   '🌷 Let\'s Try 2',
 };
 const APP_LEVELS = {
   eiken:      ['5','4','3','P'],
@@ -22,6 +24,8 @@ const APP_LEVELS = {
     'g5u1','g5u2','g5u3','g5u4','g5u5','g5u6','g5u7','g5u8','g5u9',
     'g6u1','g6u2','g6u3','g6u4','g6u5','g6u6','g6u7','g6u8','g6u9',
   ],
+  letstry1:   ['unit1','unit2','unit3','unit4','unit5','unit6','unit7','unit8','unit9'],
+  letstry2:   ['unit1','unit2','unit3','unit4','unit5','unit6','unit7','unit8','unit9'],
 };
 const LEVEL_LABELS = {
   eiken: { '5':'5級','4':'4級','3':'3級','P':'準2級' },
@@ -44,6 +48,28 @@ const LEVEL_LABELS = {
     g6u1:'6年 Unit 1', g6u2:'6年 Unit 2', g6u3:'6年 Unit 3',
     g6u4:'6年 Unit 4', g6u5:'6年 Unit 5', g6u6:'6年 Unit 6',
     g6u7:'6年 Unit 7', g6u8:'6年 Unit 8', g6u9:'6年 Unit 9',
+  },
+  letstry1: {
+    unit1:'Unit 1: Hello!',
+    unit2:'Unit 2: How are you?',
+    unit3:'Unit 3: How many?',
+    unit4:'Unit 4: I like blue.',
+    unit5:'Unit 5: What do you like?',
+    unit6:'Unit 6: ALPHABET',
+    unit7:'Unit 7: This is for you.',
+    unit8:'Unit 8: What\'s this?',
+    unit9:'Unit 9: Who are you?',
+  },
+  letstry2: {
+    unit1:'Unit 1: Hello, world!',
+    unit2:'Unit 2: Let\'s play cards.',
+    unit3:'Unit 3: I like Mondays.',
+    unit4:'Unit 4: What time is it?',
+    unit5:'Unit 5: Do you have a pen?',
+    unit6:'Unit 6: Alphabet',
+    unit7:'Unit 7: What do you want?',
+    unit8:'Unit 8: This is my favorite place.',
+    unit9:'Unit 9: This is my day.',
   },
 };
 const EDGE_BASE = 'https://rfntsrcguhldybddfgcl.supabase.co/functions/v1';
@@ -165,11 +191,9 @@ async function loadStudents() {
     .select('id,display_name,class_name,school,student_number,role')
     .eq('role', 'student');
   if (_profile && _profile.role === 'teacher') {
-    // Filter by assigned school
     if (_profile.school) {
       q = q.eq('school', _profile.school);
     }
-    // Filter by assigned classes if set — otherwise see all classes in their school
     if (_profile.assigned_classes && _profile.assigned_classes.length > 0) {
       q = q.in('class_name', _profile.assigned_classes);
     }
@@ -187,8 +211,7 @@ async function loadAssignments() {
 }
 
 function teacherClasses() {
-  // Returns list of classes this teacher is allowed to manage
-  if (!_profile || _profile.role !== 'teacher') return null; // null = all
+  if (!_profile || _profile.role !== 'teacher') return null;
   return (_profile.assigned_classes && _profile.assigned_classes.length)
     ? _profile.assigned_classes : null;
 }
@@ -230,7 +253,6 @@ function renderApp() {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-// Is this assignment done? (archived manually OR past due date)
 function isAgDone(ag) {
   if (ag.archived) return true;
   if (ag.due_date) {
@@ -240,21 +262,12 @@ function isAgDone(ag) {
   return false;
 }
 
-// Classes this teacher is allowed to see/assign (null = all)
-function teacherClasses() {
-  if (!_profile || _profile.role !== 'teacher') return null;
-  return (_profile.assigned_classes && _profile.assigned_classes.length > 0)
-    ? _profile.assigned_classes : null;
-}
-
 // ── Grades tab ─────────────────────────────────────────────────────────────
 function renderGradesTab() {
-  // For teachers, only show assigned classes; for admins, show all from students
   const tc = teacherClasses();
   const classes = [...new Set(_students.map(s=>s.class_name).filter(Boolean))]
     .filter(c => !tc || tc.includes(c)).sort();
   const levels  = APP_LEVELS[_selApp] || [];
-  // Category options per app — must match what each app writes to quiz_results
   const cats    = _selApp === 'nh6'        ? ['','grammar','response']
                 : _selApp === 'eiken'      ? ['','ALL','READING','LISTENING','VOCABULARY']
                 : _selApp === 'newhorizon' ? ['','category','grade5','grade6']
@@ -323,8 +336,6 @@ function renderGradeTable() {
   if (!students.length) { el.innerHTML = '<div class="gb-empty">生徒データがありません。</div>'; return; }
 
   const rows = students.map(s => {
-    // Exclude romaji-mode sessions (flashcard-style, not scored the same way)
-    // and sessions with fewer than 3 questions (incomplete/accidental)
     const sessions = _quiz.filter(q =>
       q.user_id === s.id &&
       q.category !== 'romaji' &&
@@ -334,12 +345,10 @@ function renderGradeTable() {
 
     let best, avg;
     if (_selApp === 'nh6' && !_selCat) {
-      // NH6 without category filter: aggregate correct/total across all
-      // categories for this unit, giving a true combined unit score
       const tc = sessions.reduce((a,q)=>a+(q.correct||0),0);
       const tt = sessions.reduce((a,q)=>a+(q.total||0),0);
       avg  = tt > 0 ? Math.round(tc/tt*100) : null;
-      best = avg; // combined score IS the score
+      best = avg;
     } else {
       best = Math.max(...sessions.map(q=>q.score_pct||0));
       const tc = sessions.reduce((a,q)=>a+(q.correct||0),0);
@@ -402,9 +411,8 @@ function renderAsgnGrid() {
   const el = $('asgn-grid');
   const canEdit  = _profile && ['admin','teacher'].includes(_profile.role);
   const isAdmin  = _profile && _profile.role === 'admin';
-  const tCls     = teacherClasses(); // null = no restriction
+  const tCls     = teacherClasses();
 
-  // Filter assignments visible to this user
   let visible = _assignments;
   if (tCls) visible = visible.filter(ag => !ag.class_name || tCls.includes(ag.class_name));
 
@@ -443,7 +451,6 @@ function renderAsgnGrid() {
   }
 
   function groupByClass(list) {
-    // For admins: group by class_name with dividers; for teachers: just flat
     if (!isAdmin) return '<div class="asgn-grid">'+list.map(cardHTML).join('')+'</div>';
     const grouped = {};
     list.forEach(ag => { const k = ag.class_name || '全クラス'; (grouped[k]=grouped[k]||[]).push(ag); });
@@ -585,13 +592,13 @@ function openAssignmentModal(existing) {
     '<div class="field"><label>対象クラス</label>'+
     (function(){
       const showAll = !tc;
-      // Auto-select teacher's only class if they have exactly one
       const autoSelect = (!ag.class_name && tc && tc.length === 1) ? tc[0] : ag.class_name;
       return '<select id="ag-class">' +
         (showAll ? '<option value="">全クラス</option>' : '') +
         modalClasses.map(c=>'<option value="'+esc(c)+'"'+(c===autoSelect?' selected':'')+'>'+esc(c)+'</option>').join('') +
         '</select>';
     })() +
+    '</div>'+
     '<div class="field"><label>締め切り日</label><input type="date" id="ag-due" value="'+esc(ag.due_date||'')+'"></div>'+
     '</div>'+
     '<div class="modal-foot">'+
