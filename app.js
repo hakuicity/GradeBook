@@ -227,6 +227,35 @@ async function loadQuiz() {
   if (_dateTo)   q = q.lte('created_at', _dateTo + 'T23:59:59');
   const { data } = await q.order('created_at', { ascending: false });
   _quiz = data || [];
+
+  // Fetch manual grade overrides for this app+level and inject as synthetic quiz rows
+  const { data: manuals } = await window.hk._client
+    .from('manual_grades')
+    .select('user_id,score_pct,note,created_at,updated_at')
+    .eq('app_id', _selApp)
+    .eq('level', _selLevel || '');
+  if (manuals && manuals.length) {
+    manuals.forEach(m => {
+      // Mark existing rows for this user so we can show the ✏️ indicator
+      _quiz.filter(r => r.user_id === m.user_id).forEach(r => r._hasManual = true);
+      // If the student has no quiz rows at all, inject a synthetic row so they appear as submitted
+      const hasRows = _quiz.some(r => r.user_id === m.user_id);
+      if (!hasRows) {
+        _quiz.push({
+          user_id: m.user_id,
+          correct: m.score_pct,
+          total: 100,
+          score_pct: m.score_pct,
+          created_at: m.updated_at || m.created_at,
+          level: _selLevel,
+          category: _selCat || '',
+          app_id: _selApp,
+          _manual: true
+        });
+      }
+    });
+  }
+
   _quizLoaded = true;
   renderGradeTable();
 }
@@ -341,22 +370,26 @@ function renderGradeTable() {
       q.category !== 'romaji' &&
       (q.total || 0) >= 3
     );
-    if (!sessions.length) return { s, n:0, best:null, avg:null, last:null };
+    // Also include any injected manual-only rows (total=100, synthetic)
+    const manualRows = _quiz.filter(q => q.user_id === s.id && q._manual);
+    const allRows = sessions.length ? sessions : manualRows;
+    if (!allRows.length) return { s, n:0, best:null, avg:null, last:null, manual:false };
 
+    const hasManual = allRows.some(q => q._manual || q._hasManual);
     let best, avg;
     if (_selApp === 'nh6' && !_selCat) {
-      const tc = sessions.reduce((a,q)=>a+(q.correct||0),0);
-      const tt = sessions.reduce((a,q)=>a+(q.total||0),0);
+      const tc = allRows.reduce((a,q)=>a+(q.correct||0),0);
+      const tt = allRows.reduce((a,q)=>a+(q.total||0),0);
       avg  = tt > 0 ? Math.round(tc/tt*100) : null;
       best = avg;
     } else {
-      best = Math.max(...sessions.map(q=>q.score_pct||0));
-      const tc = sessions.reduce((a,q)=>a+(q.correct||0),0);
-      const tt = sessions.reduce((a,q)=>a+(q.total||0),0);
+      best = Math.max(...allRows.map(q=>q.score_pct||0));
+      const tc = allRows.reduce((a,q)=>a+(q.correct||0),0);
+      const tt = allRows.reduce((a,q)=>a+(q.total||0),0);
       avg  = tt > 0 ? Math.round(tc/tt*100) : null;
     }
-    const last = sessions.map(q=>q.created_at).sort().pop();
-    return { s, n:sessions.length, best, avg, last };
+    const last = allRows.map(q=>q.created_at).sort().pop();
+    return { s, n: sessions.length + manualRows.length, best, avg, last, manual: hasManual };
   });
 
   const done = rows.filter(r=>r.n>0);
@@ -375,25 +408,132 @@ function renderGradeTable() {
     (_selCat ? ' &nbsp;›&nbsp; ' + esc(_selCat) : '') +
     (_selClass ? ' &nbsp;·&nbsp; ' + esc(_selClass) : '') + '</p>' +
     '<div class="gb-table-wrap"><table class="gb-table">' +
-    '<thead><tr><th>氏名</th><th>クラス</th><th>回数</th><th>最高点</th><th>平均</th><th>スコア</th><th>最終提出</th></tr></thead>' +
+    '<thead><tr><th>氏名</th><th>クラス</th><th>回数</th><th>最高点</th><th>平均</th><th>スコア</th><th>最終提出</th><th>手動</th></tr></thead>' +
     '<tbody>' +
     rows.map(r => {
       if (!r.n) return '<tr>' +
         '<td><strong>'+esc(r.s.display_name||'')+'</strong></td>' +
         '<td style="color:var(--text3)">'+esc(r.s.class_name||'')+'</td>' +
         '<td><span class="badge badge-none">未提出</span></td>' +
-        '<td>—</td><td>—</td><td>—</td><td>—</td></tr>';
+        '<td>—</td><td>—</td><td>—</td><td>—</td>' +
+        '<td><button class="btn-outline btn-sm" data-edit-grade="'+esc(r.s.id)+'" data-edit-name="'+esc(r.s.display_name||'')+'" title="手動でスコアを入力">✏️</button></td></tr>';
       const c = scoreColor(r.best);
+      const manualMark = r.manual ? ' <span title="手動入力" style="font-size:10px;color:var(--text3)">✏️</span>' : '';
       return '<tr>' +
         '<td><strong>'+esc(r.s.display_name||'')+'</strong></td>' +
         '<td style="color:var(--text3)">'+esc(r.s.class_name||'')+'</td>' +
         '<td style="text-align:center">'+r.n+'</td>' +
-        '<td class="score-'+c+'" style="font-weight:800">'+r.best+'%</td>' +
+        '<td class="score-'+c+'" style="font-weight:800">'+r.best+'%'+manualMark+'</td>' +
         '<td style="color:var(--text2)">'+(r.avg!==null?r.avg+'%':'—')+'</td>' +
         '<td><div class="gb-bar"><div class="gb-bar-fill fill-'+c+'" style="width:'+r.best+'%"></div></div></td>' +
-        '<td style="color:var(--text3);font-size:12px">'+fmt(r.last)+'</td></tr>';
+        '<td style="color:var(--text3);font-size:12px">'+fmt(r.last)+'</td>' +
+        '<td><button class="btn-outline btn-sm" data-edit-grade="'+esc(r.s.id)+'" data-edit-name="'+esc(r.s.display_name||'')+'" data-current-best="'+r.best+'" title="手動でスコアを編集">✏️</button></td></tr>';
     }).join('') +
     '</tbody></table></div>';
+
+  // Wire edit-grade buttons
+  el.querySelectorAll('[data-edit-grade]').forEach(btn => {
+    btn.onclick = () => openEditGradeModal(
+      btn.dataset.editGrade,
+      btn.dataset.editName,
+      btn.dataset.currentBest ? parseInt(btn.dataset.currentBest) : null
+    );
+  });
+}
+
+// ── Manual grade edit modal ─────────────────────────────────────────────────
+// Requires this table in Supabase:
+//
+//   CREATE TABLE IF NOT EXISTS public.manual_grades (
+//     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+//     user_id     uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+//     app_id      text NOT NULL,
+//     level       text NOT NULL,
+//     score_pct   integer NOT NULL CHECK (score_pct >= 0 AND score_pct <= 100),
+//     note        text,
+//     graded_by   uuid REFERENCES auth.users(id),
+//     created_at  timestamptz DEFAULT now(),
+//     updated_at  timestamptz DEFAULT now(),
+//     UNIQUE (user_id, app_id, level)
+//   );
+//   ALTER TABLE public.manual_grades ENABLE ROW LEVEL SECURITY;
+//   CREATE POLICY "teachers can manage manual_grades" ON public.manual_grades
+//     FOR ALL TO authenticated
+//     USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) IN ('teacher','admin'));
+
+async function openEditGradeModal(userId, displayName, currentBest) {
+  // Load existing manual grade if any
+  const { data: existing } = await window.hk._client
+    .from('manual_grades')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('app_id', _selApp)
+    .eq('level', _selLevel || '')
+    .single();
+
+  const lvLabel = (LEVEL_LABELS[_selApp]||{})[_selLevel] || _selLevel;
+  const currentManual = existing ? existing.score_pct : null;
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-back';
+  backdrop.innerHTML =
+    '<div class="modal-card" style="max-width:360px">' +
+    '<h2>✏️ 手動スコア入力</h2>' +
+    '<p style="font-size:13px;color:var(--text2);margin-bottom:4px"><strong>'+esc(displayName)+'</strong></p>' +
+    '<p style="font-size:12px;color:var(--text3);margin-bottom:16px">'+esc(APP_LABELS[_selApp]||_selApp)+' · '+esc(lvLabel)+'</p>' +
+    (currentBest !== null ? '<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:14px;color:var(--text2)">自動スコア（最高点）: <strong>'+currentBest+'%</strong></div>' : '') +
+    (currentManual !== null ? '<div style="background:#FFF8E1;border:1px solid #FFE082;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:14px;color:#F57F17">既存の手動スコア: <strong>'+currentManual+'%</strong></div>' : '') +
+    '<div class="field"><label>手動スコア（0〜100）</label>' +
+    '<input type="number" id="mg-score" min="0" max="100" placeholder="例：85"' +
+    ' value="'+(currentManual !== null ? currentManual : '')+'"></div>' +
+    '<div class="field"><label>メモ（任意）</label>' +
+    '<input type="text" id="mg-note" placeholder="例：口頭試験・補講後" value="'+esc(existing?.note||'')+'"></div>' +
+    '<div class="modal-foot">' +
+    (existing ? '<button class="btn-outline btn-sm btn-danger" id="mg-delete">削除</button>' : '') +
+    '<button class="btn-outline btn-sm" id="mg-cancel">キャンセル</button>' +
+    '<button class="btn-primary btn-sm" id="mg-save">保存する</button>' +
+    '</div></div>';
+
+  document.body.appendChild(backdrop);
+  backdrop.onclick = e => { if (e.target === backdrop) backdrop.remove(); };
+  backdrop.querySelector('#mg-cancel').onclick = () => backdrop.remove();
+
+  if (existing) {
+    backdrop.querySelector('#mg-delete').onclick = async () => {
+      if (!confirm('手動スコアを削除しますか？')) return;
+      const { error } = await window.hk._client
+        .from('manual_grades').delete()
+        .eq('user_id', userId).eq('app_id', _selApp).eq('level', _selLevel || '');
+      if (error) { alert('削除に失敗しました: '+error.message); return; }
+      backdrop.remove();
+      await loadQuiz();
+    };
+  }
+
+  backdrop.querySelector('#mg-save').onclick = async () => {
+    const raw = backdrop.querySelector('#mg-score').value;
+    const score = parseInt(raw);
+    if (isNaN(score) || score < 0 || score > 100) {
+      alert('0〜100の整数を入力してください。');
+      return;
+    }
+    const note = backdrop.querySelector('#mg-note').value.trim() || null;
+    const payload = {
+      user_id:   userId,
+      app_id:    _selApp,
+      level:     _selLevel || '',
+      score_pct: score,
+      note,
+      graded_by: _user.id,
+      updated_at: new Date().toISOString()
+    };
+    const { error } = await window.hk._client
+      .from('manual_grades')
+      .upsert(payload, { onConflict: 'user_id,app_id,level' });
+    if (error) { alert('保存に失敗しました: '+error.message); return; }
+    backdrop.remove();
+    await loadQuiz();
+  };
 }
 
 // ── Assignments tab ─────────────────────────────────────────────────────────
@@ -651,15 +791,20 @@ async function deleteAsgn(id) {
 function exportCSV() {
   if (!_quizLoaded) { alert('先にデータを表示してください。'); return; }
   const students = _selClass ? _students.filter(s=>s.class_name===_selClass) : _students;
-  const rows = ['氏名,クラス,学籍番号,回数,最高点,平均'];
+  const rows = ['氏名,クラス,学籍番号,回数,最高点,平均,手動スコア'];
   students.forEach(s => {
-    const sessions = _quiz.filter(q=>q.user_id===s.id);
-    if (!sessions.length) { rows.push(['"'+s.display_name+'"','"'+(s.class_name||'')+'"','"'+(s.student_number||'')+'"','0','未提出','未提出'].join(',')); return; }
-    const best = Math.max(...sessions.map(q=>q.score_pct||0));
+    const sessions = _quiz.filter(q=>q.user_id===s.id && !q._manual);
+    const manualRow = _quiz.find(q=>q.user_id===s.id && q._manual);
+    const manualPct = manualRow ? manualRow.score_pct+'%' : '';
+    if (!sessions.length && !manualRow) {
+      rows.push(['"'+s.display_name+'"','"'+(s.class_name||'')+'"','"'+(s.student_number||'')+'"','0','未提出','未提出',''].join(','));
+      return;
+    }
+    const best = sessions.length ? Math.max(...sessions.map(q=>q.score_pct||0))+'%' : '—';
     const tc = sessions.reduce((a,q)=>a+(q.correct||0),0);
     const tt = sessions.reduce((a,q)=>a+(q.total||0),0);
     const avg = tt>0?Math.round(tc/tt*100)+'%':'—';
-    rows.push(['"'+s.display_name+'"','"'+(s.class_name||'')+'"','"'+(s.student_number||'')+'"',sessions.length,best+'%',avg].join(','));
+    rows.push(['"'+s.display_name+'"','"'+(s.class_name||'')+'"','"'+(s.student_number||'')+'"',sessions.length,best,avg,manualPct].join(','));
   });
   const blob = new Blob(['\uFEFF'+rows.join('\n')],{type:'text/csv'});
   const a = document.createElement('a');
